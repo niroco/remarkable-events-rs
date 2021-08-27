@@ -12,4 +12,8 @@ documentation = "https://docs.rs/remarkable-events"
 
 [dependencies]
 byteorder = "1.4.3"
+tokio = { version = "1.10.1", default-features = false, features = [ "fs", "io-util" ] }
+
+
+[dev-dependencies]
 tokio = { version = "1.10.1", default-features = false, features = [ "rt", "fs", "io-util" ] }

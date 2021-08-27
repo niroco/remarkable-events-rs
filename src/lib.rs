@@ -158,8 +158,8 @@ struct UnfinishedTool {
     kind: ToolKind,
     x: Option<u32>,
     y: Option<u32>,
-    tilt_x: Option<u32>,
-    tilt_y: Option<u32>,
+    tilt_x: Option<i32>,
+    tilt_y: Option<i32>,
     pressure: Option<u32>,
     distance: Option<u32>,
 }
@@ -179,12 +179,12 @@ impl UnfinishedTool {
 
     fn apply_movement(&mut self, mv: Movement) {
         match mv {
-            Movement::X(n) => self.x.replace(n),
-            Movement::Y(n) => self.y.replace(n),
-            Movement::TiltX(n) => self.tilt_x.replace(n),
-            Movement::TiltY(n) => self.tilt_y.replace(n),
-            Movement::Pressure(n) => self.pressure.replace(n),
-            Movement::Distance(n) => self.distance.replace(n),
+            Movement::X(n) => self.x = Some(n),
+            Movement::Y(n) => self.y = Some(n),
+            Movement::TiltX(n) => self.tilt_x = Some(n),
+            Movement::TiltY(n) => self.tilt_y = Some(n),
+            Movement::Pressure(n) => self.pressure = Some(n),
+            Movement::Distance(n) => self.distance = Some(n),
         };
     }
 
@@ -220,8 +220,8 @@ impl UnfinishedTool {
 pub struct Tool {
     kind: ToolKind,
     point: Point,
-    tilt_x: Option<u32>,
-    tilt_y: Option<u32>,
+    tilt_x: Option<i32>,
+    tilt_y: Option<i32>,
     height: Height,
 }
 
@@ -312,8 +312,8 @@ impl ToolKind {
 pub enum Movement {
     X(u32),
     Y(u32),
-    TiltX(u32),
-    TiltY(u32),
+    TiltX(i32),
+    TiltY(i32),
     Pressure(u32),
     Distance(u32),
 }
@@ -367,8 +367,8 @@ impl TryFrom<RawEvent> for Event {
             (3, 1) => Ok(Event::Movement(Movement::Y(ev.value))),
             (3, 24) => Ok(Event::Movement(Movement::Pressure(ev.value))),
             (3, 25) => Ok(Event::Movement(Movement::Distance(ev.value))),
-            (3, 26) => Ok(Event::Movement(Movement::TiltX(ev.value))),
-            (3, 27) => Ok(Event::Movement(Movement::TiltY(ev.value))),
+            (3, 26) => Ok(Event::Movement(Movement::TiltX(ev.value as i32))),
+            (3, 27) => Ok(Event::Movement(Movement::TiltY(ev.value as i32))),
 
             (3, _) => Err(UnknownEvent::MovementCode(ev.code)),
 
