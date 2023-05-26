@@ -51,7 +51,7 @@ impl From<EventSourceError<UnknownEvent>> for Error {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ToolEvent {
     Update(Tool),
     Removed(ToolKind),
@@ -61,7 +61,6 @@ pub enum ToolEvent {
 /// For now, to get stuff going, just run with it as a Pen.
 pub struct ToolEventSource {
     event_source: EventSource<Event>,
-    state: Option<ToolBuilder>,
 }
 
 impl ToolEventSource {
@@ -70,10 +69,7 @@ impl ToolEventSource {
             .await
             .map_err(Error::Io)?;
 
-        Ok(Self {
-            event_source,
-            state: None,
-        })
+        Ok(Self { event_source })
     }
 
     pub async fn next(&mut self) -> Result<ToolEvent, Error> {
@@ -84,50 +80,38 @@ impl ToolEventSource {
         // These events dictate what we should do.
         // @TODO: Handle these events properly.
 
-        // Wait for an Appeared event.
-        let state = if let Some(ref mut state) = self.state {
-            state
-        } else {
-            // Wait for an add event.
-            loop {
-                match self.event_source.next().await? {
-                    Event::ToolAdded(ToolKind::Pen) => {
-                        let new_state = ToolBuilder::new(ToolKind::Pen);
-                        break self.state.insert(new_state);
-                    }
+        let mut start_kind: Option<ToolKind> = None;
 
-                    Event::ToolAdded(_kind) => {
-
-                        // eprintln!("Ignoring add event for kind `{:?}`", kind);
-                    }
-
-                    _ev => {
-                        // eprintln!("Ignoring Event: {:?}", ev);
-                    }
+        let kind = loop {
+            match self.event_source.next().await? {
+                Event::ToolAdded(kind) => {
+                    start_kind = Some(kind);
                 }
+
+                Event::Sync if start_kind.is_some() => {
+                    break start_kind.unwrap();
+                }
+
+                Event::Sync => {
+                    eprintln!("Got a sync without received ToolAdded");
+                }
+
+                ev => eprintln!("Skipping {ev:?}. Waiting for ToolAdded"),
             }
         };
+
+        let mut builder = UnfinishedTool::new(kind);
+
         loop {
             match self.event_source.next().await? {
-                Event::Movement(mv) => match state {
-                    ToolBuilder::Building(unfinished) => unfinished.apply_movement(mv),
-                    ToolBuilder::Built(tool) => tool.apply_movement(mv),
-                },
+                Event::Movement(mv) => builder.apply_movement(mv),
 
-                Event::Sync => match state {
-                    ToolBuilder::Building(unfinished) => {
-                        let tool = unfinished.finish().expect("Could not finish tool");
-                        *state = ToolBuilder::Built(tool);
-                        return Ok(ToolEvent::Update(tool));
-                    }
+                Event::Sync => {
+                    let tool = builder
+                        .finish()
+                        .map_err(|err| Error::UnfinishedEvent(builder.kind, err))?;
 
-                    ToolBuilder::Built(tool) => {
-                        return Ok(ToolEvent::Update(*tool));
-                    }
-                },
-                Event::ToolRemoved(ToolKind::Pen) => {
-                    self.state = None;
-                    return Ok(ToolEvent::Removed(ToolKind::Pen));
+                    return Ok(ToolEvent::Update(tool));
                 }
 
                 Event::ToolRemoved(kind) => {
@@ -143,17 +127,6 @@ impl ToolEventSource {
     }
 }
 
-enum ToolBuilder {
-    Built(Tool),
-    Building(UnfinishedTool),
-}
-
-impl ToolBuilder {
-    fn new(kind: ToolKind) -> Self {
-        Self::Building(UnfinishedTool::kind(kind))
-    }
-}
-
 struct UnfinishedTool {
     kind: ToolKind,
     x: Option<u32>,
@@ -165,7 +138,7 @@ struct UnfinishedTool {
 }
 
 impl UnfinishedTool {
-    fn kind(kind: ToolKind) -> Self {
+    fn new(kind: ToolKind) -> Self {
         Self {
             kind,
             x: None,
@@ -216,26 +189,13 @@ impl UnfinishedTool {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Tool {
     kind: ToolKind,
     point: Point,
     tilt_x: Option<i32>,
     tilt_y: Option<i32>,
     height: Height,
-}
-
-impl Tool {
-    fn apply_movement(&mut self, ev: Movement) {
-        match ev {
-            Movement::X(n) => self.point.0 = n,
-            Movement::Y(n) => self.point.1 = n,
-            Movement::TiltX(n) => self.tilt_x = Some(n),
-            Movement::TiltY(n) => self.tilt_y = Some(n),
-            Movement::Pressure(n) => self.height = Height::Touching(n),
-            Movement::Distance(n) => self.height = Height::Distance(n),
-        }
-    }
 }
 
 impl fmt::Display for Tool {
@@ -248,7 +208,7 @@ impl fmt::Display for Tool {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Height {
     Missing,
     Distance(u32),
@@ -265,7 +225,7 @@ impl fmt::Display for Height {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Point(u32, u32);
 
 impl fmt::Display for Point {
@@ -274,7 +234,7 @@ impl fmt::Display for Point {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ToolKind {
     Pen,
     Rubber,
@@ -363,8 +323,8 @@ impl TryFrom<RawEvent> for Event {
                 }
             }
 
-            (3, 0) => Ok(Event::Movement(Movement::X(ev.value))),
-            (3, 1) => Ok(Event::Movement(Movement::Y(ev.value))),
+            (3, 0) => Ok(Event::Movement(Movement::Y(ev.value))),
+            (3, 1) => Ok(Event::Movement(Movement::X(ev.value))),
             (3, 24) => Ok(Event::Movement(Movement::Pressure(ev.value))),
             (3, 25) => Ok(Event::Movement(Movement::Distance(ev.value))),
             (3, 26) => Ok(Event::Movement(Movement::TiltX(ev.value as i32))),
