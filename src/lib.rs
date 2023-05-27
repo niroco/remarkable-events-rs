@@ -1,191 +1,47 @@
-use std::{convert::TryFrom, error::Error as StdError, fmt, path::Path};
+use std::{convert::TryFrom, fmt, path::Path};
 
-use event_source::EventSourceError;
-
-mod event_source;
 mod raw_event;
+mod tool_events;
 
-use {event_source::EventSource, raw_event::RawEvent};
+use raw_event::{RawEvent, RawEventSource};
 
-#[derive(Debug)]
+pub use tool_events::{ToolEvent, ToolEventSource};
+
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// UnfinishedEvent occurs when a Sync is received
     /// but we've not yet received X and Y coords.
-    UnfinishedEvent(ToolKind, &'static str),
+
+    #[error("Cool not construct an initial ToolEvent of kind `{kind}`: {error}")]
+    UnfinishedTool { kind: ToolKind, error: &'static str },
 
     /// UnknownEvent occurs when the input_event is unknown
     /// and not (yet?) supported by this library.
-    UnknownEventRead(UnknownEvent),
+    #[error("Read an unknown event: {0}")]
+    UnknownEventRead(#[from] UnknownEvent),
 
-    Io(std::io::Error),
+    /// Unexpected event
+    #[error("Unexpected event: {0:?}")]
+    UnexpectedEvent(String),
+
+    #[error("IO: {0}")]
+    Io(#[from] std::io::Error),
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::UnfinishedEvent(kind, missing) => {
-                write!(f, "Unfinished {} event. Missing {}", kind, missing)
-            }
-            Self::UnknownEventRead(err) => write!(f, "Read Unknown event: {}", err),
-
-            Self::Io(err) => write!(f, "Io error: {}", err),
-        }
-    }
+pub struct EventSource {
+    raw_events: RawEventSource,
 }
 
-impl StdError for Error {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match self {
-            Self::Io(ref inner) => inner.source(),
-            _ => None,
-        }
-    }
-}
-
-impl From<EventSourceError<UnknownEvent>> for Error {
-    fn from(err: EventSourceError<UnknownEvent>) -> Self {
-        match err {
-            EventSourceError::Io(io_err) => Self::Io(io_err),
-            EventSourceError::Parse(ev_err) => Self::UnknownEventRead(ev_err),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum ToolEvent {
-    Update(Tool),
-    Removed(ToolKind),
-}
-/// This should be generalised by making struct Pen
-/// be a struct Tool that has a kind field.
-/// For now, to get stuff going, just run with it as a Pen.
-pub struct ToolEventSource {
-    event_source: EventSource<Event>,
-}
-
-impl ToolEventSource {
+impl EventSource {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let event_source = event_source::EventSource::open(path)
-            .await
-            .map_err(Error::Io)?;
-
-        Ok(Self { event_source })
+        let raw_events = RawEventSource::open(path).await?;
+        Ok(Self { raw_events })
     }
 
-    pub async fn next(&mut self) -> Result<ToolEvent, Error> {
-        // Currently we need to listen to Tool events.
-        // Tool::Pen(true) means the Pen is close to the Pad, start to build.
-        // Tool::Pen(false) means the Pen was lifted and we need to reset.
-        //
-        // These events dictate what we should do.
-        // @TODO: Handle these events properly.
+    pub async fn next(&mut self) -> Result<Event, Error> {
+        let ev = self.raw_events.next().await?;
 
-        let mut start_kind: Option<ToolKind> = None;
-
-        let kind = loop {
-            match self.event_source.next().await? {
-                Event::ToolAdded(kind) => {
-                    start_kind = Some(kind);
-                }
-
-                Event::Sync if start_kind.is_some() => {
-                    break start_kind.unwrap();
-                }
-
-                Event::Sync => {
-                    eprintln!("Got a sync without received ToolAdded");
-                }
-
-                ev => eprintln!("Skipping {ev:?}. Waiting for ToolAdded"),
-            }
-        };
-
-        let mut builder = UnfinishedTool::new(kind);
-
-        loop {
-            match self.event_source.next().await? {
-                Event::Movement(mv) => builder.apply_movement(mv),
-
-                Event::Sync => {
-                    let tool = builder
-                        .finish()
-                        .map_err(|err| Error::UnfinishedEvent(builder.kind, err))?;
-
-                    return Ok(ToolEvent::Update(tool));
-                }
-
-                Event::ToolRemoved(kind) => {
-                    // Should really wait for a sync....
-                    eprintln!("Ignoring non Pen ToolRemoved({:?})", kind);
-                }
-
-                Event::ToolAdded(kind) => {
-                    eprintln!("Ignoring ToolAdded({:?})", kind);
-                }
-            }
-        }
-    }
-}
-
-struct UnfinishedTool {
-    kind: ToolKind,
-    x: Option<u32>,
-    y: Option<u32>,
-    tilt_x: Option<i32>,
-    tilt_y: Option<i32>,
-    pressure: Option<u32>,
-    distance: Option<u32>,
-}
-
-impl UnfinishedTool {
-    fn new(kind: ToolKind) -> Self {
-        Self {
-            kind,
-            x: None,
-            y: None,
-            tilt_x: None,
-            tilt_y: None,
-            pressure: None,
-            distance: None,
-        }
-    }
-
-    fn apply_movement(&mut self, mv: Movement) {
-        match mv {
-            Movement::X(n) => self.x = Some(n),
-            Movement::Y(n) => self.y = Some(n),
-            Movement::TiltX(n) => self.tilt_x = Some(n),
-            Movement::TiltY(n) => self.tilt_y = Some(n),
-            Movement::Pressure(n) => self.pressure = Some(n),
-            Movement::Distance(n) => self.distance = Some(n),
-        };
-    }
-
-    // @TODO: Change Return type to Result with an error saying what field is missing.
-    fn finish(&mut self) -> Result<Tool, &'static str> {
-        let x = self.x.take().ok_or("X")?;
-        let y = self.y.take().ok_or("Y")?;
-
-        let height = match (self.pressure.take(), self.distance.take()) {
-            (Some(pressure), Some(distance)) => {
-                if distance < 10 && 700 < pressure {
-                    Height::Touching(pressure)
-                } else {
-                    Height::Distance(distance)
-                }
-            }
-            (Some(pressure), None) => Height::Touching(pressure),
-            (None, Some(distance)) => Height::Distance(distance),
-            (None, None) => Height::Missing,
-        };
-
-        Ok(Tool {
-            kind: self.kind,
-            point: Point(x, y),
-            tilt_x: self.tilt_x.take(),
-            tilt_y: self.tilt_y.take(),
-            height,
-        })
+        Ok(Event::try_from(ev)?)
     }
 }
 
@@ -205,6 +61,19 @@ impl fmt::Display for Tool {
             "Tool at {}. tilt x{:?} y{:?}. {}",
             self.point, self.tilt_x, self.tilt_y, self.height
         )
+    }
+}
+
+impl Tool {
+    pub fn apply_movement(&mut self, mv: Movement) {
+        match mv {
+            Movement::X(x) => self.point.0 = x,
+            Movement::Y(y) => self.point.1 = y,
+            Movement::TiltX(tilt_x) => self.tilt_x = Some(tilt_x),
+            Movement::TiltY(tilt_y) => self.tilt_y = Some(tilt_y),
+            Movement::Distance(distance) => self.height = Height::Distance(distance),
+            Movement::Pressure(pressure) => self.height = Height::Touching(pressure),
+        }
     }
 }
 
@@ -235,6 +104,7 @@ impl fmt::Display for Point {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[repr(u8)]
 pub enum ToolKind {
     Pen,
     Rubber,
@@ -298,7 +168,7 @@ pub enum Movement {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Events read from event1 (Only registers the pen)
-enum Event {
+pub enum Event {
     Sync,
     ToolAdded(ToolKind),
     ToolRemoved(ToolKind),
@@ -339,36 +209,15 @@ impl TryFrom<RawEvent> for Event {
 
 //
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum UnknownEvent {
+    #[error("Unknown ToolCode `{0}`")]
     ToolCode(u16),
+    #[error("Unknown ToolValue `{0}`. Should be [0, 1]")]
     ToolValue(u32),
+    #[error("Unknown MovementCode `{0}`")]
     MovementCode(u16),
 
+    #[error("Unknown Type `{0:?}`")]
     Type(RawEvent),
-}
-
-impl std::error::Error for UnknownEvent {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
-
-impl fmt::Display for UnknownEvent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::ToolCode(code) => write!(f, "Unknown tool code`{:#04x}`", code),
-            Self::ToolValue(value) => write!(
-                f,
-                "Unexpected value for Tool event. Should be 0 or 1. Was:`{:#04x}`",
-                value
-            ),
-            Self::MovementCode(code) => write!(f, "Unknown movement code `{:#04x}`", code),
-            Self::Type(ev) => write!(
-                f,
-                "Unknown type: `{:#02x}`, code: `{:#04x}`, value: `{:#08x}`, ",
-                ev.typ, ev.code, ev.value
-            ),
-        }
-    }
 }

@@ -1,8 +1,7 @@
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
-use bytes::BytesMut;
-use remarkable_events::{Tool, ToolEvent};
+use remarkable_events::ToolEvent;
 use tokio::{io::AsyncReadExt, net};
 
 const BUF_SIZE: usize = 1024;

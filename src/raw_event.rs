@@ -1,5 +1,6 @@
 use byteorder::{ByteOrder, LittleEndian};
-use std::time;
+use std::{path, time};
+use tokio::{fs, io::AsyncReadExt};
 
 ///
 /// An input_event is built up using 24bs
@@ -29,5 +30,30 @@ impl From<&[u8; 16]> for RawEvent {
             code,
             value,
         }
+    }
+}
+
+pub struct RawEventSource {
+    file: fs::File,
+}
+
+impl RawEventSource {
+    pub async fn open(path: impl AsRef<path::Path>) -> std::io::Result<Self> {
+        Ok(Self {
+            file: fs::File::open(&path).await?,
+        })
+    }
+
+    pub async fn next(&mut self) -> Result<RawEvent, std::io::Error> {
+        let mut buf = [0u8; 16];
+
+        if self.file.read_exact(&mut buf).await? != 16 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Read error. Could not read 16 bytes",
+            ));
+        }
+
+        Ok(RawEvent::from(&buf))
     }
 }
