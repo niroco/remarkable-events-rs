@@ -54,14 +54,11 @@ impl Session {
                 Ok(ev) => {
                     bincode::serialize_into(&mut buf, &ev)?;
                     let l = buf.get_ref().len();
-                    println!("Serialized to {l} bs");
 
                     self.socket.write_u64(l as u64).await?;
-                    println!("Wrote header");
 
                     self.socket.write_all(&buf.get_ref()[0..l]).await?;
 
-                    println!("Wrote body");
                     buf.get_mut().clear();
                 }
 

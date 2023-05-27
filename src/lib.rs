@@ -47,11 +47,11 @@ impl EventSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Tool {
-    kind: ToolKind,
-    point: Point,
-    tilt_x: Option<i32>,
-    tilt_y: Option<i32>,
-    height: Height,
+    pub kind: ToolKind,
+    pub point: Point,
+    pub tilt_x: Option<i32>,
+    pub tilt_y: Option<i32>,
+    pub height: Height,
 }
 
 impl fmt::Display for Tool {
@@ -61,19 +61,6 @@ impl fmt::Display for Tool {
             "Tool at {}. tilt x{:?} y{:?}. {}",
             self.point, self.tilt_x, self.tilt_y, self.height
         )
-    }
-}
-
-impl Tool {
-    pub fn apply_movement(&mut self, mv: Movement) {
-        match mv {
-            Movement::X(x) => self.point.0 = x,
-            Movement::Y(y) => self.point.1 = y,
-            Movement::TiltX(tilt_x) => self.tilt_x = Some(tilt_x),
-            Movement::TiltY(tilt_y) => self.tilt_y = Some(tilt_y),
-            Movement::Distance(distance) => self.height = Height::Distance(distance),
-            Movement::Pressure(pressure) => self.height = Height::Touching(pressure),
-        }
     }
 }
 
@@ -95,11 +82,14 @@ impl fmt::Display for Height {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct Point(u32, u32);
+pub struct Point {
+    pub x: u32,
+    pub y: u32,
+}
 
 impl fmt::Display for Point {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{},{}", self.0, self.1)
+        write!(f, "{},{}", self.x, self.y)
     }
 }
 

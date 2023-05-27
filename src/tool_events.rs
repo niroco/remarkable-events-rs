@@ -126,7 +126,7 @@ impl ToolBuilder {
 
         Ok(Tool {
             kind,
-            point: crate::Point(x, y),
+            point: crate::Point { x, y },
             tilt_x: self.tilt_x,
             tilt_y: self.tilt_y,
             height,

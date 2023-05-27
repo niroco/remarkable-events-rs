@@ -18,7 +18,11 @@ async fn main() -> Result<()> {
 
     let sock = net::TcpSocket::new_v4()?;
 
-    //let mut device = VirtualDevice::new();
+    let mm = mouce::nix::NixMouseManager::new();
+
+    let (x, y) = mm.get_position()?;
+    println!("mouse at {x},{y}");
+
     let mut stream = sock.connect(target_addr).await?;
 
     let mut buf = [0u8; BUF_SIZE];
@@ -31,17 +35,24 @@ async fn main() -> Result<()> {
             break;
         }
 
-        println!("Read header `{header}`");
-
         stream.read_exact(&mut buf[0..header]).await?;
 
-        println!("Read body");
+        const RM_MAX_Y: u32 = 21000;
+        const RM_MAX_X: u32 = 15725;
 
         let tool_event = bincode::deserialize::<ToolEvent>(&buf[0..header])?;
 
         match tool_event {
             ToolEvent::Update(tool) => {
-                println!("{tool:?}");
+                //let x = tool.point.x / 10;
+                //let y = (1440 - (tool.point.y / 10));
+
+                let x = tool.point.x as f32 / RM_MAX_X as f32;
+                let y = tool.point.y as f32 / RM_MAX_Y as f32;
+
+                println!("{x}, {y}");
+
+                //mm.move_to(x as usize, y as usize)?;
             }
 
             other => {
