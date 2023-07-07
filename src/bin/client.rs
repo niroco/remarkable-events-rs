@@ -4,7 +4,15 @@ use anyhow::{Context, Result};
 use remarkable_events::ToolEvent;
 use tokio::{io::AsyncReadExt, net};
 
+use mouse_keyboard_input::VirtualDevice;
+
 const BUF_SIZE: usize = 1024;
+
+#[derive(Debug)]
+struct P {
+    x: f32,
+    y: f32,
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -16,16 +24,15 @@ async fn main() -> Result<()> {
 
     println!("Connecting to `{target_addr}`");
 
+    let mut device = VirtualDevice::new();
+
     let sock = net::TcpSocket::new_v4()?;
-
-    let mm = mouce::nix::NixMouseManager::new();
-
-    let (x, y) = mm.get_position()?;
-    println!("mouse at {x},{y}");
 
     let mut stream = sock.connect(target_addr).await?;
 
     let mut buf = [0u8; BUF_SIZE];
+
+    let mut latest_point = Option::<P>::None;
 
     loop {
         let header = stream.read_u64().await? as usize;
@@ -37,26 +44,38 @@ async fn main() -> Result<()> {
 
         stream.read_exact(&mut buf[0..header]).await?;
 
-        const RM_MAX_Y: u32 = 21000;
-        const RM_MAX_X: u32 = 15725;
+        const RM_MAX_Y: f32 = 21000.;
+        const RM_MAX_X: f32 = 15725.;
+        const SCALE: f32 = 0.2;
 
         let tool_event = bincode::deserialize::<ToolEvent>(&buf[0..header])?;
 
         match tool_event {
             ToolEvent::Update(tool) => {
-                //let x = tool.point.x / 10;
-                //let y = (1440 - (tool.point.y / 10));
+                let new_p = P {
+                    x: tool.point.x as f32 / RM_MAX_X,
+                    y: tool.point.y as f32 / RM_MAX_Y,
+                };
 
-                let x = tool.point.x as f32 / RM_MAX_X as f32;
-                let y = tool.point.y as f32 / RM_MAX_Y as f32;
+                println!("GOT {new_p:?}");
 
-                println!("{x}, {y}");
+                if let Some(prev_point) = latest_point {
+                    let dx = new_p.x - prev_point.x;
+                    let dy = new_p.y - prev_point.y;
+                    println!("deltas: {dx},{dy}");
 
-                //mm.move_to(x as usize, y as usize)?;
+                    let mx = (RM_MAX_X * dx * SCALE) as i32;
+                    let my = (RM_MAX_Y * dy * SCALE) as i32;
+
+                    println!("moving {mx},{my}");
+                    device.move_mouse(mx, -my).context("moving mouse")?;
+                }
+
+                latest_point = Some(new_p);
             }
 
-            other => {
-                println!("Got event: {other:?}");
+            ToolEvent::Removed => {
+                latest_point = None;
             }
         }
     }
